@@ -333,7 +333,7 @@
 
       <p class="small-note">
         Please speak clearly in English. Each answer has a maximum of 15 seconds.
-        You can stop recording at any time.
+        You can click "Save & Continue" as soon as you finish speaking.
       </p>
 
     </div>
@@ -478,9 +478,9 @@
         }
       }
 
-      transcriptBox.textContent = finalTranscript + interimTranscript;
-
-      if ((finalTranscript + interimTranscript).trim().length >= 2) {
+      const currentText = (finalTranscript + interimTranscript).trim();
+      if (currentText.length > 0) {
+        transcriptBox.textContent = currentText;
         nextBtn.classList.remove("hidden");
       }
     };
@@ -494,18 +494,15 @@
       recBtnText.textContent = "Click to Speak Answer";
 
       if (event.error === "no-speech") {
-        statusText.textContent = "No speech detected. Click button to speak again.";
+        statusText.textContent = "Silence detected. Click button to record again.";
       } else if (event.error === "not-allowed") {
         showError("Microphone permission denied. Please allow mic access in browser settings.");
-      } else if (event.error === "network") {
-        showError("Network Error: Google Speech API failed to connect. Check internet connection.");
       } else {
-        showError("Microphone error: " + event.error);
+        showError("Microphone notice: " + event.error);
       }
     };
 
     recognition.onend = function() {
-      // Safely end recording session without restarting loop
       isRecording = false;
       stopAnswerTimer();
       recBtn.classList.remove("recording");
@@ -525,45 +522,56 @@
 
 
   /* =====================================================
-     15-SECOND ANSWER TIMER
+     15-SECOND ANSWER TIMER (FIXED STACKING BUG)
   ===================================================== */
+
+  function stopAnswerTimer() {
+    if (timerInterval !== null) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+  }
 
   function resetAnswerTimer() {
     stopAnswerTimer();
     remainingSeconds = MAX_ANSWER_SECONDS;
-    timerBox.textContent = "Answer Time: 15 seconds";
+    timerBox.textContent = "Answer Time: " + MAX_ANSWER_SECONDS + " seconds";
     timerBox.classList.remove("warning");
   }
 
   function startAnswerTimer() {
-    if (timerInterval) return;
+    // Stop any previously existing interval first to prevent multi-countdown bugs
+    stopAnswerTimer();
 
     timerInterval = setInterval(function () {
       remainingSeconds--;
+
+      if (remainingSeconds <= 0) {
+        remainingSeconds = 0;
+        timerBox.textContent = "Answer Time: 0 seconds";
+        stopAnswerTimer();
+
+        isRecording = false;
+        if (recognition) {
+          try {
+            recognition.stop();
+          } catch(e) {}
+        }
+        statusText.textContent = "Time up! Click Save & Continue.";
+        
+        // Show next button if user spoke anything
+        if (finalTranscript.trim().length >= 2) {
+          nextBtn.classList.remove("hidden");
+        }
+        return;
+      }
+
       timerBox.textContent = "Answer Time: " + remainingSeconds + " seconds";
 
       if (remainingSeconds <= 5) {
         timerBox.classList.add("warning");
       }
-
-      if (remainingSeconds <= 0) {
-        stopAnswerTimer();
-        isRecording = false;
-        if (recognition) {
-          statusText.textContent = "Time completed. Click Save & Continue.";
-          try {
-            recognition.stop();
-          } catch(e) {}
-        }
-      }
     }, 1000);
-  }
-
-  function stopAnswerTimer() {
-    if (timerInterval) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-    }
   }
 
 
@@ -648,6 +656,8 @@
       return;
     }
 
+    // Reset state before fresh recording attempt
+    resetAnswerTimer();
     finalTranscript = "";
     transcriptBox.textContent = "Listening...";
 
@@ -735,6 +745,8 @@
         recognition.stop();
       } catch(e) {}
     }
+
+    stopAnswerTimer();
 
     const spokenText = finalTranscript.trim();
 
