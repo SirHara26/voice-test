@@ -500,6 +500,9 @@
       } else {
         showError("Microphone notice: " + event.error);
       }
+
+      // A failed attempt must never leave the old countdown visible.
+      resetAnswerTimer();
     };
 
     recognition.onend = function() {
@@ -513,6 +516,7 @@
         statusText.textContent = "Speech captured. Click Save & Continue.";
       } else {
         statusText.textContent = "Microphone Idle";
+        resetAnswerTimer();
       }
     };
 
@@ -540,8 +544,12 @@
   }
 
   function startAnswerTimer() {
-    // Stop any previously existing interval first to prevent multi-countdown bugs
+    // Every new recording starts a completely fresh 15-second countdown.
     stopAnswerTimer();
+
+    remainingSeconds = MAX_ANSWER_SECONDS;
+    timerBox.textContent = "Answer Time: " + MAX_ANSWER_SECONDS + " seconds";
+    timerBox.classList.remove("warning");
 
     timerInterval = setInterval(function () {
       remainingSeconds--;
@@ -551,15 +559,18 @@
         timerBox.textContent = "Answer Time: 0 seconds";
         stopAnswerTimer();
 
-        isRecording = false;
         if (recognition) {
           try {
             recognition.stop();
           } catch(e) {}
         }
-        statusText.textContent = "Time up! Click Save & Continue.";
-        
-        // Show next button if user spoke anything
+
+        isRecording = false;
+        recBtn.classList.remove("recording");
+        recBtnText.textContent = "Click to Speak Answer";
+        statusText.textContent =
+          "Time up. Click Save & Continue if your answer was captured.";
+
         if (finalTranscript.trim().length >= 2) {
           nextBtn.classList.remove("hidden");
         }
