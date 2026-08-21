@@ -206,6 +206,18 @@
       margin-top: 18px;
     }
 
+    .timer {
+      text-align: center;
+      font-weight: 700;
+      color: var(--accent);
+      margin: 8px 0 12px;
+      font-size: 15px;
+    }
+
+    .timer.warning {
+      color: var(--danger);
+    }
+
     .hidden {
       display: none !important;
     }
@@ -235,7 +247,7 @@
 
   <div class="card">
 
-    <h1>Voice Process AI Screening</h1>
+    <h1>Voice Process Communication Screening</h1>
 
     <p class="subtitle">
       Initial Automated Fluency & Communication Assessment
@@ -248,16 +260,12 @@
     <div id="errorBox" class="error"></div>
 
 
-    <!-- =========================
-         STEP 1 - REGISTRATION
-    ========================== -->
-
+    <!-- STEP 1 - REGISTRATION -->
     <div id="step-auth">
 
       <h2>Candidate Registration</h2>
 
       <label for="name">Full Name</label>
-
       <input
         type="text"
         id="name"
@@ -266,7 +274,6 @@
       >
 
       <label for="phone">Contact Number</label>
-
       <input
         type="tel"
         id="phone"
@@ -279,16 +286,13 @@
         class="btn btn-primary"
         onclick="startAssessment()"
       >
-        Start AI Voice Test
+        Start Voice Assessment
       </button>
 
     </div>
 
 
-    <!-- =========================
-         STEP 2 - ASSESSMENT
-    ========================== -->
-
+    <!-- STEP 2 - ASSESSMENT -->
     <div id="step-test" class="hidden">
 
       <div id="q-container"></div>
@@ -306,8 +310,12 @@
         Microphone Idle
       </p>
 
+      <div id="timer" class="timer">
+        Answer Time: 15 seconds
+      </div>
+
       <span class="transcript-label">
-        Live AI Transcription View:
+        Live Speech Transcription:
       </span>
 
       <div id="transcript" class="transcript">
@@ -324,17 +332,14 @@
       </button>
 
       <p class="small-note">
-        Please speak clearly in English and complete each answer before
-        clicking Save & Continue.
+        Please speak clearly in English. Each answer has a maximum of 15 seconds.
+        You can stop recording at any time.
       </p>
 
     </div>
 
 
-    <!-- =========================
-         STEP 3 - SUCCESS
-    ========================== -->
-
+    <!-- STEP 3 - SUCCESS -->
     <div id="step-complete" class="success hidden">
 
       <h2>Submission Successful!</h2>
@@ -370,27 +375,16 @@
   ===================================================== */
 
   const questions = [
-
     "Introduce yourself and describe why you want to build a career in a global customer support voice process environment.",
-
     "Scenario: A customer calls in furious because their delivery is 3 days late. Speak directly to the customer and demonstrate how you would calm them down.",
-
     "Read this out loud clearly: Product updates are deployed automatically every Tuesday at 04:00 AM Indian Standard Time to minimize client workflow disruption.",
-
     "Explain a time you faced a tough technical issue with an app or device, and how you clearly explained the solution to someone else.",
-
     "A customer says they were charged twice for the same transaction. Explain how you would handle the conversation and what steps you would take.",
-
     "Describe a situation where you had to work under pressure and still maintain good communication and accuracy.",
-
     "A customer is unable to log in to their account. Explain how you would guide the customer through the troubleshooting process.",
-
     "Tell us about a time when you had to deal with an unhappy or difficult person. What did you do to resolve the situation?",
-
     "Read this out loud clearly: We understand the importance of protecting customer information and we always follow the required security and verification procedures.",
-
     "Imagine you are finishing a customer support call. Give a professional closing statement that confirms the customer's issue has been addressed and ends the conversation positively."
-
   ];
 
 
@@ -399,14 +393,14 @@
   ===================================================== */
 
   let currentQuestion = 0;
-
   let finalTranscript = "";
-
   let isRecording = false;
-
   let speechStartTime = 0;
-
   let recognition = null;
+
+  const MAX_ANSWER_SECONDS = 15;
+  let timerInterval = null;
+  let remainingSeconds = MAX_ANSWER_SECONDS;
 
   let candidateData = {
     name: "",
@@ -419,35 +413,17 @@
      DOM ELEMENTS
   ===================================================== */
 
-  const stepAuth =
-    document.getElementById("step-auth");
-
-  const stepTest =
-    document.getElementById("step-test");
-
-  const stepComplete =
-    document.getElementById("step-complete");
-
-  const transcriptBox =
-    document.getElementById("transcript");
-
-  const statusText =
-    document.getElementById("status");
-
-  const recBtn =
-    document.getElementById("rec-btn");
-
-  const recBtnText =
-    document.getElementById("rec-btn-text");
-
-  const nextBtn =
-    document.getElementById("next-btn");
-
-  const progress =
-    document.getElementById("progress");
-
-  const errorBox =
-    document.getElementById("errorBox");
+  const stepAuth = document.getElementById("step-auth");
+  const stepTest = document.getElementById("step-test");
+  const stepComplete = document.getElementById("step-complete");
+  const transcriptBox = document.getElementById("transcript");
+  const statusText = document.getElementById("status");
+  const timerBox = document.getElementById("timer");
+  const recBtn = document.getElementById("rec-btn");
+  const recBtnText = document.getElementById("rec-btn-text");
+  const nextBtn = document.getElementById("next-btn");
+  const progress = document.getElementById("progress");
+  const errorBox = document.getElementById("errorBox");
 
 
   /* =====================================================
@@ -455,174 +431,154 @@
   ===================================================== */
 
   function showError(message) {
-
     errorBox.textContent = message;
-
     errorBox.style.display = "block";
-
   }
 
-
   function clearError() {
-
     errorBox.textContent = "";
-
     errorBox.style.display = "none";
-
   }
 
 
   /* =====================================================
-     SPEECH RECOGNITION
+     SPEECH RECOGNITION SETUP
   ===================================================== */
 
   const SpeechRecognition =
     window.SpeechRecognition ||
     window.webkitSpeechRecognition;
 
-
   if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
 
-    recognition =
-      new SpeechRecognition();
-
-    recognition.continuous = true;
-
+    // Continuous set to false prevents socket disconnects on GitHub Pages
+    recognition.continuous = false;
     recognition.interimResults = true;
-
     recognition.lang = "en-IN";
 
-
     recognition.onstart = function () {
-
       isRecording = true;
-
       speechStartTime = Date.now();
+      startAnswerTimer();
 
-      statusText.textContent =
-        "🔴 Listening... Speak clearly.";
-
+      statusText.textContent = "🔴 Listening... Speak clearly.";
       recBtn.classList.add("recording");
-
-      recBtnText.textContent =
-        "Stop Recording";
-
+      recBtnText.textContent = "Stop Recording";
     };
-
 
     recognition.onresult = function(event) {
-
       let interimTranscript = "";
 
-      for (
-        let i = event.resultIndex;
-        i < event.results.length;
-        i++
-      ) {
-
-        const text =
-          event.results[i][0].transcript;
-
-
-        if (
-          event.results[i].isFinal
-        ) {
-
-          finalTranscript +=
-            text + " ";
-
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const text = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += text + " ";
         } else {
-
-          interimTranscript +=
-            text;
-
+          interimTranscript += text;
         }
-
       }
 
+      transcriptBox.textContent = finalTranscript + interimTranscript;
 
-      transcriptBox.textContent =
-        finalTranscript +
-        interimTranscript;
-
-
-      if (
-        finalTranscript.trim().length >= 5
-      ) {
-
+      if (finalTranscript.trim().length >= 5) {
         nextBtn.classList.remove("hidden");
-
       }
-
     };
-
 
     recognition.onerror = function(event) {
+      console.error("Speech Recognition Error:", event.error);
 
-      console.error(
-        "Speech Recognition Error:",
-        event.error
-      );
-
-      isRecording = false;
-
-      recBtn.classList.remove(
-        "recording"
-      );
-
-      recBtnText.textContent =
-        "Click to Speak Answer";
-
-
-      if (
-        event.error === "not-allowed"
-      ) {
-
-        showError(
-          "Microphone access was denied. Please allow microphone permission in Chrome."
-        );
-
-      } else if (
-        event.error === "no-speech"
-      ) {
-
-        statusText.textContent =
-          "No speech detected. Please try again.";
-
-      } else {
-
-        showError(
-          "Microphone error: " +
-          event.error
-        );
-
+      // Treat no-speech as non-fatal
+      if (event.error === "no-speech") {
+        statusText.textContent = "No speech detected. Please try speaking again.";
+        return;
       }
 
+      isRecording = false;
+      stopAnswerTimer();
+      recBtn.classList.remove("recording");
+      recBtnText.textContent = "Click to Speak Answer";
+
+      if (event.error === "not-allowed") {
+        showError("Microphone permission denied. Please enable mic access in your browser site settings.");
+      } else if (event.error === "network") {
+        showError(
+          "Network Error: Google Speech API failed to connect. Please check your internet connection, " +
+          "disable any Ad-Blockers/Brave Shields for this site, and ensure you are using Chrome or Edge."
+        );
+      } else {
+        showError("Microphone error: " + event.error);
+      }
     };
 
-
     recognition.onend = function() {
-
-      isRecording = false;
-
-      recBtn.classList.remove(
-        "recording"
-      );
-
-      recBtnText.textContent =
-        "Resume Speaking";
-
-      statusText.textContent =
-        "Speech captured. Click Save & Continue.";
-
+      // Auto restart recognition if candidate is still within timer limits
+      if (isRecording && remainingSeconds > 0) {
+        try {
+          recognition.start();
+        } catch (e) {
+          isRecording = false;
+          stopAnswerTimer();
+          recBtn.classList.remove("recording");
+          recBtnText.textContent = "Resume Speaking";
+        }
+      } else {
+        isRecording = false;
+        stopAnswerTimer();
+        recBtn.classList.remove("recording");
+        recBtnText.textContent = "Resume Speaking";
+        if (finalTranscript.trim().length >= 5) {
+          statusText.textContent = "Speech captured. Click Save & Continue.";
+        } else {
+          statusText.textContent = "Microphone Idle";
+        }
+      }
     };
 
   } else {
+    showError("Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.");
+  }
 
-    showError(
-      "Speech recognition is not supported in this browser. Please use Google Chrome."
-    );
 
+  /* =====================================================
+     15-SECOND ANSWER TIMER
+  ===================================================== */
+
+  function resetAnswerTimer() {
+    stopAnswerTimer();
+    remainingSeconds = MAX_ANSWER_SECONDS;
+    timerBox.textContent = "Answer Time: 15 seconds";
+    timerBox.classList.remove("warning");
+  }
+
+  function startAnswerTimer() {
+    if (timerInterval) return; // Prevent multiple intervals
+
+    timerInterval = setInterval(function () {
+      remainingSeconds--;
+      timerBox.textContent = "Answer Time: " + remainingSeconds + " seconds";
+
+      if (remainingSeconds <= 5) {
+        timerBox.classList.add("warning");
+      }
+
+      if (remainingSeconds <= 0) {
+        stopAnswerTimer();
+        isRecording = false;
+        if (recognition) {
+          statusText.textContent = "Time completed. Saving your response...";
+          recognition.stop();
+        }
+      }
+    }, 1000);
+  }
+
+  function stopAnswerTimer() {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
   }
 
 
@@ -631,74 +587,30 @@
   ===================================================== */
 
   function startAssessment() {
-
     clearError();
 
-    const name =
-      document.getElementById("name")
-        .value.trim();
-
-    const phone =
-      document.getElementById("phone")
-        .value.trim();
-
+    const name = document.getElementById("name").value.trim();
+    const phone = document.getElementById("phone").value.trim();
 
     if (!name) {
-
-      showError(
-        "Please enter the candidate's full name."
-      );
-
+      showError("Please enter the candidate's full name.");
       return;
-
     }
 
-
-    if (!phone) {
-
-      showError(
-        "Please enter the candidate's contact number."
-      );
-
+    if (!phone || phone.length < 10) {
+      showError("Please enter a valid contact number.");
       return;
-
     }
 
-
-    if (phone.length < 10) {
-
-      showError(
-        "Please enter a valid contact number."
-      );
-
-      return;
-
-    }
-
-
-    candidateData.name =
-      name;
-
-    candidateData.phone =
-      phone;
-
-    candidateData.scores =
-      [];
-
+    candidateData.name = name;
+    candidateData.phone = phone;
+    candidateData.scores = [];
     currentQuestion = 0;
 
-
-    stepAuth.classList.add(
-      "hidden"
-    );
-
-    stepTest.classList.remove(
-      "hidden"
-    );
-
+    stepAuth.classList.add("hidden");
+    stepTest.classList.remove("hidden");
 
     showQuestion();
-
   }
 
 
@@ -707,49 +619,26 @@
   ===================================================== */
 
   function showQuestion() {
-
     clearError();
-
     finalTranscript = "";
+    transcriptBox.textContent = "Your spoken response will appear here in real-time...";
+    nextBtn.classList.add("hidden");
+    statusText.textContent = "Microphone Idle";
 
-    transcriptBox.textContent =
-      "Your spoken response will appear here in real-time...";
+    resetAnswerTimer();
 
-    nextBtn.classList.add(
-      "hidden"
-    );
+    progress.style.width = ((currentQuestion / questions.length) * 100) + "%";
 
-    statusText.textContent =
-      "Microphone Idle";
-
-
-    progress.style.width =
-      (
-        (currentQuestion /
-        questions.length) *
-        100
-      ) + "%";
-
-
-    document.getElementById(
-      "q-container"
-    ).innerHTML = `
-
+    document.getElementById("q-container").innerHTML = `
       <div>
-
         <div class="question-number">
-          QUESTION ${currentQuestion + 1}
-          OF ${questions.length}
+          QUESTION ${currentQuestion + 1} OF ${questions.length}
         </div>
-
         <div class="question-text">
           ${questions[currentQuestion]}
         </div>
-
       </div>
-
     `;
-
   }
 
 
@@ -758,46 +647,28 @@
   ===================================================== */
 
   function toggleRecording() {
-
     clearError();
 
-
     if (!recognition) {
-
-      showError(
-        "Speech recognition is unavailable. Please use Google Chrome."
-      );
-
+      showError("Speech recognition is unavailable. Please use Google Chrome.");
       return;
-
     }
-
 
     if (isRecording) {
-
+      isRecording = false;
+      stopAnswerTimer();
       recognition.stop();
-
       return;
-
     }
-
 
     finalTranscript = "";
-
-    transcriptBox.textContent =
-      "Listening...";
-
+    transcriptBox.textContent = "Listening...";
 
     try {
-
       recognition.start();
-
     } catch (error) {
-
       console.error(error);
-
     }
-
   }
 
 
@@ -805,214 +676,62 @@
      CALCULATE SCORE
   ===================================================== */
 
-  function calculateScore(
-    spokenText,
-    durationSeconds
-  ) {
-
-    const words =
-      spokenText
-        .split(/\s+/)
-        .filter(Boolean);
-
-
-    const wordCount =
-      words.length;
-
-
-    const wpm =
-      (
-        wordCount /
-        Math.max(durationSeconds, 1)
-      ) * 60;
-
-
-    /* FLUENCY */
+  function calculateScore(spokenText, durationSeconds) {
+    const words = spokenText.split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+    const wpm = (wordCount / Math.max(durationSeconds, 1)) * 60;
 
     let fluency = 8.5;
-
-
-    if (
-      wpm < 70 ||
-      wpm > 210
-    ) {
-
+    if (wpm < 70 || wpm > 210) {
       fluency = 6.2;
-
-    } else if (
-      wpm < 100 ||
-      wpm > 170
-    ) {
-
+    } else if (wpm < 100 || wpm > 170) {
       fluency = 7.8;
-
     }
 
-
-    /* FILLER WORDS */
-
-    const fillerWords = [
-      "uh",
-      "um",
-      "ah",
-      "basically"
-    ];
-
-
-    fillerWords.forEach(
-      function(word) {
-
-        const regex =
-          new RegExp(
-            "\\b" +
-            word +
-            "\\b",
-            "gi"
-          );
-
-        const matches =
-          spokenText.match(regex);
-
-
-        if (matches) {
-
-          fluency -=
-            matches.length * 0.2;
-
-        }
-
+    const fillerWords = ["uh", "um", "ah", "basically"];
+    fillerWords.forEach(function(word) {
+      const regex = new RegExp("\\b" + word + "\\b", "gi");
+      const matches = spokenText.match(regex);
+      if (matches) {
+        fluency -= matches.length * 0.2;
       }
-    );
+    });
 
-
-    fluency =
-      Math.max(
-        4.5,
-        Math.min(
-          9.8,
-          fluency
-        )
-      );
-
-
-    /* CUSTOMER HANDLING */
+    fluency = Math.max(4.5, Math.min(9.8, fluency));
 
     let handling = 7.5;
-
-
     const handlingWords = [
-
-      "sorry",
-      "apologize",
-      "understand",
-      "help",
-      "assist",
-      "resolve",
-      "thank you",
-      "absolutely",
-      "certainly"
-
+      "sorry", "apologize", "understand", "help", 
+      "assist", "resolve", "thank you", "absolutely", "certainly"
     ];
 
-
-    handlingWords.forEach(
-      function(word) {
-
-        if (
-          spokenText
-            .toLowerCase()
-            .includes(word)
-        ) {
-
-          handling += 0.3;
-
-        }
-
+    handlingWords.forEach(function(word) {
+      if (spokenText.toLowerCase().includes(word)) {
+        handling += 0.3;
       }
-    );
+    });
 
-
-    handling =
-      Math.min(
-        9.9,
-        handling
-      );
-
-
-    /* GRAMMAR ESTIMATE */
+    handling = Math.min(9.9, handling);
 
     let grammar = 8.0;
-
-
     if (wordCount < 8) {
-
       grammar = 6.5;
-
-    } else if (
-      wordCount < 15
-    ) {
-
+    } else if (wordCount < 15) {
       grammar = 7.2;
-
     }
 
+    let pronunciation = fluency + 0.2;
+    pronunciation = Math.max(5.5, Math.min(9.5, pronunciation));
 
-    /* PRONUNCIATION ESTIMATE */
-
-    let pronunciation =
-      fluency + 0.2;
-
-
-    pronunciation =
-      Math.max(
-        5.5,
-        Math.min(
-          9.5,
-          pronunciation
-        )
-      );
-
-
-    /* OVERALL */
-
-    const overall =
-      (
-        fluency +
-        pronunciation +
-        grammar +
-        handling
-      ) / 4;
-
+    const overall = (fluency + pronunciation + grammar + handling) / 4;
 
     return {
-
-      overall:
-        Number(
-          overall.toFixed(1)
-        ),
-
-      fluency:
-        Number(
-          fluency.toFixed(1)
-        ),
-
-      pronunciation:
-        Number(
-          pronunciation.toFixed(1)
-        ),
-
-      grammar:
-        Number(
-          grammar.toFixed(1)
-        ),
-
-      handling:
-        Number(
-          handling.toFixed(1)
-        )
-
+      overall: Number(overall.toFixed(1)),
+      fluency: Number(fluency.toFixed(1)),
+      pronunciation: Number(pronunciation.toFixed(1)),
+      grammar: Number(grammar.toFixed(1)),
+      handling: Number(handling.toFixed(1))
     };
-
   }
 
 
@@ -1021,75 +740,31 @@
   ===================================================== */
 
   function nextQuestion() {
-
     clearError();
 
-
-    if (
-      isRecording &&
-      recognition
-    ) {
-
+    if (isRecording && recognition) {
+      isRecording = false;
       recognition.stop();
-
     }
 
+    const spokenText = finalTranscript.trim();
 
-    const spokenText =
-      finalTranscript.trim();
-
-
-    if (
-      spokenText.length < 5
-    ) {
-
-      showError(
-        "Please speak your answer before continuing."
-      );
-
+    if (spokenText.length < 5) {
+      showError("Please speak your answer before continuing.");
       return;
-
     }
 
+    const durationSeconds = Math.max((Date.now() - speechStartTime) / 1000, 1);
+    const score = calculateScore(spokenText, durationSeconds);
 
-    const durationSeconds =
-      Math.max(
-        (
-          Date.now() -
-          speechStartTime
-        ) / 1000,
-        1
-      );
-
-
-    const score =
-      calculateScore(
-        spokenText,
-        durationSeconds
-      );
-
-
-    candidateData.scores.push(
-      score
-    );
-
-
+    candidateData.scores.push(score);
     currentQuestion++;
 
-
-    if (
-      currentQuestion <
-      questions.length
-    ) {
-
+    if (currentQuestion < questions.length) {
       showQuestion();
-
     } else {
-
       submitFinalResults();
-
     }
-
   }
 
 
@@ -1098,19 +773,10 @@
   ===================================================== */
 
   async function submitFinalResults() {
-
-    progress.style.width =
-      "100%";
-
-
-    stepTest.classList.add(
-      "hidden"
-    );
-
-
-    statusText.textContent =
-      "Submitting assessment...";
-
+    stopAnswerTimer();
+    progress.style.width = "100%";
+    stepTest.classList.add("hidden");
+    statusText.textContent = "Submitting assessment...";
 
     let overall = 0;
     let fluency = 0;
@@ -1118,116 +784,42 @@
     let grammar = 0;
     let handling = 0;
 
+    candidateData.scores.forEach(function(score) {
+      overall += score.overall;
+      fluency += score.fluency;
+      pronunciation += score.pronunciation;
+      grammar += score.grammar;
+      handling += score.handling;
+    });
 
-    candidateData.scores.forEach(
-      function(score) {
+    const total = candidateData.scores.length;
+    const formData = new URLSearchParams();
 
-        overall += score.overall;
-
-        fluency += score.fluency;
-
-        pronunciation +=
-          score.pronunciation;
-
-        grammar += score.grammar;
-
-        handling += score.handling;
-
-      }
-    );
-
-
-    const total =
-      candidateData.scores.length;
-
-
-    const formData =
-      new URLSearchParams();
-
-
-    formData.append(
-      "candidateName",
-      candidateData.name
-    );
-
-
-    formData.append(
-      "candidatePhone",
-      candidateData.phone
-    );
-
-
-    formData.append(
-      "overall",
-      (overall / total).toFixed(1)
-    );
-
-
-    formData.append(
-      "fluency",
-      (fluency / total).toFixed(1)
-    );
-
-
-    formData.append(
-      "pronunciation",
-      (pronunciation / total).toFixed(1)
-    );
-
-
-    formData.append(
-      "grammar",
-      (grammar / total).toFixed(1)
-    );
-
-
-    formData.append(
-      "handling",
-      (handling / total).toFixed(1)
-    );
-
+    formData.append("candidateName", candidateData.name);
+    formData.append("candidatePhone", candidateData.phone);
+    formData.append("overall", (overall / total).toFixed(1));
+    formData.append("fluency", (fluency / total).toFixed(1));
+    formData.append("pronunciation", (pronunciation / total).toFixed(1));
+    formData.append("grammar", (grammar / total).toFixed(1));
+    formData.append("handling", (handling / total).toFixed(1));
 
     try {
+      await fetch(GOOGLE_SHEET_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: formData.toString()
+      });
 
-      await fetch(
-        GOOGLE_SHEET_URL,
-        {
-          method: "POST",
-          mode: "no-cors",
-          headers: {
-            "Content-Type":
-              "application/x-www-form-urlencoded;charset=UTF-8"
-          },
-          body:
-            formData.toString()
-        }
-      );
-
-
-      stepComplete.classList.remove(
-        "hidden"
-      );
-
+      stepComplete.classList.remove("hidden");
 
     } catch (error) {
-
-      console.error(
-        "Google Sheet submission error:",
-        error
-      );
-
-
-      stepTest.classList.remove(
-        "hidden"
-      );
-
-
-      showError(
-        "Assessment completed, but submission to Google Sheet failed. Please contact HR."
-      );
-
+      console.error("Google Sheet submission error:", error);
+      stepTest.classList.remove("hidden");
+      showError("Assessment completed, but submission to Google Sheet failed. Please contact HR.");
     }
-
   }
 
 </script>
