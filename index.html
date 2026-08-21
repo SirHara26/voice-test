@@ -572,11 +572,10 @@
         recBtnText.textContent = "Click to Speak Answer";
         statusText.textContent = "15 seconds completed. Moving to next question...";
 
-        // Never submit an automatic zero just because SpeechRecognition
-        // returned no-speech. Keep the candidate on this question and allow
-        // a fresh recording attempt.
+        // Only advance if a FINAL speech transcript exists.
+        // Otherwise remain on this question and require a retry.
         if (finalTranscript.trim().length >= 2) {
-          nextQuestion(true);
+          nextQuestion();
         } else {
           remainingSeconds = MAX_ANSWER_SECONDS;
           timerBox.textContent = "Answer Time: 15 seconds";
@@ -691,54 +690,230 @@
      CALCULATE SCORE
   ===================================================== */
 
-  function calculateScore(spokenText, durationSeconds) {
-    const words = spokenText.split(/\s+/).filter(Boolean);
-    const wordCount = words.length;
-    const wpm = (wordCount / Math.max(durationSeconds, 1)) * 60;
+  function normalizeText(text) {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
-    let fluency = 8.5;
-    if (wpm < 70 || wpm > 210) {
-      fluency = 6.2;
-    } else if (wpm < 100 || wpm > 170) {
-      fluency = 7.8;
-    }
+  function tokenSimilarity(a, b) {
+    const aWords = normalizeText(a).split(" ").filter(Boolean);
+    const bWords = normalizeText(b).split(" ").filter(Boolean);
 
-    const fillerWords = ["uh", "um", "ah", "basically"];
-    fillerWords.forEach(function(word) {
-      const regex = new RegExp("\\b" + word + "\\b", "gi");
-      const matches = spokenText.match(regex);
-      if (matches) {
-        fluency -= matches.length * 0.2;
-      }
+    if (!aWords.length || !bWords.length) return 0;
+
+    const aSet = new Set(aWords);
+    const bSet = new Set(bWords);
+
+    let matches = 0;
+    aSet.forEach(function(word) {
+      if (bSet.has(word)) matches++;
     });
 
-    fluency = Math.max(4.5, Math.min(9.8, fluency));
+    return matches / Math.max(aSet.size, bSet.size);
+  }
 
-    let handling = 7.5;
-    const handlingWords = [
-      "sorry", "apologize", "understand", "help", 
-      "assist", "resolve", "thank you", "absolutely", "certainly"
+  function hasAny(text, words) {
+    const lower = normalizeText(text);
+    return words.some(function(word) {
+      return lower.includes(normalizeText(word));
+    });
+  }
+
+  function countAny(text, words) {
+    const lower = normalizeText(text);
+    return words.reduce(function(total, word) {
+      return total + (lower.includes(normalizeText(word)) ? 1 : 0);
+    }, 0);
+  }
+
+  function calculateScore(spokenText, durationSeconds, questionIndex) {
+    const text = normalizeText(spokenText);
+    const words = text.split(" ").filter(Boolean);
+    const wordCount = words.length;
+
+    /*
+      IMPORTANT:
+      This is a communication-screening score, not an AI accent detector.
+
+      Browser SpeechRecognition gives us a transcript, not reliable acoustic
+      pronunciation/accent measurements. Therefore "pronunciation" below is
+      a transcript/clarity proxy. A true US-accent score would require audio
+      analysis and a speech/accent model.
+    */
+
+    const question = questions[questionIndex];
+
+    // Reject obvious non-answers before scoring.
+    const trivialAnswers = [
+      "yes", "yes yes", "ok", "okay", "fine", "good", "no",
+      "thank you", "thanks", "sure", "hmm", "hello"
     ];
 
-    handlingWords.forEach(function(word) {
-      if (spokenText.toLowerCase().includes(word)) {
-        handling += 0.3;
-      }
-    });
-
-    handling = Math.min(9.9, handling);
-
-    let grammar = 8.0;
-    if (wordCount < 8) {
-      grammar = 6.5;
-    } else if (wordCount < 15) {
-      grammar = 7.2;
+    if (trivialAnswers.includes(text)) {
+      return null;
     }
 
-    let pronunciation = fluency + 0.2;
-    pronunciation = Math.max(5.5, Math.min(9.5, pronunciation));
+    // Q3 and Q9 are read-aloud questions. Score against the exact sentence.
+    if (questionIndex === 2 || questionIndex === 8) {
+      const expected =
+        questionIndex === 2
+          ? "Product updates are deployed automatically every Tuesday at 04:00 AM Indian Standard Time to minimize client workflow disruption."
+          : "We understand the importance of protecting customer information and we always follow the required security and verification procedures.";
 
-    const overall = (fluency + pronunciation + grammar + handling) / 4;
+      const similarity = tokenSimilarity(spokenText, expected);
+      const expectedWords = normalizeText(expected).split(" ").length;
+
+      if (wordCount < Math.max(5, Math.floor(expectedWords * 0.45))) {
+        return null;
+      }
+
+      // Repeating the question/partial sentence should not receive a high score.
+      const accuracy = Math.round(4 + similarity * 5.5);
+      const fluency = wordCount >= expectedWords * 0.75 ? 8.5 : 6.5;
+      const grammar = similarity >= 0.80 ? 8.5 : similarity >= 0.60 ? 7.0 : 5.5;
+      const pronunciation = similarity >= 0.90 ? 8.5 : similarity >= 0.75 ? 7.3 : 6.0;
+      const handling = similarity >= 0.85 ? 8.0 : 6.0;
+
+      return {
+        overall: Number(((accuracy + fluency + pronunciation + grammar + handling) / 5).toFixed(1)),
+        fluency: Number(fluency.toFixed(1)),
+        pronunciation: Number(pronunciation.toFixed(1)),
+        grammar: Number(grammar.toFixed(1)),
+        handling: Number(handling.toFixed(1))
+      };
+    }
+
+    // For scenario questions, reward relevant customer-support behavior.
+    const keywordGroups = {
+      1: [
+        ["apologize", "sorry", "understand"],
+        ["help", "assist", "resolve"],
+        ["delivery", "delay", "late"],
+        ["check", "track", "status", "update"],
+        ["customer", "thank"]
+      ],
+      3: [
+        ["technical", "issue", "problem", "error"],
+        ["check", "troubleshoot", "restart", "diagnose"],
+        ["explain", "guide", "steps"],
+        ["solution", "resolve", "fix"],
+        ["clearly", "simple"]
+      ],
+      4: [
+        ["sorry", "apologize", "understand"],
+        ["double", "twice", "duplicate", "charged"],
+        ["transaction", "payment", "charge"],
+        ["check", "verify", "review"],
+        ["refund", "reverse", "resolve"]
+      ],
+      5: [
+        ["pressure", "deadline", "busy"],
+        ["prioritize", "organize", "manage"],
+        ["accuracy", "accurate", "quality"],
+        ["communicate", "communication", "update"],
+        ["calm", "focus", "team"]
+      ],
+      6: [
+        ["login", "log", "account", "password"],
+        ["verify", "check"],
+        ["reset", "password"],
+        ["browser", "cache", "device", "internet"],
+        ["guide", "step", "resolve"]
+      ],
+      7: [
+        ["listen", "understand", "calm"],
+        ["sorry", "apologize"],
+        ["customer", "person"],
+        ["resolve", "help", "solution"],
+        ["communicate", "explain"]
+      ],
+      9: [
+        ["thank", "thanks"],
+        ["issue", "problem", "resolved", "addressed"],
+        ["help", "assist"],
+        ["anything", "further", "additional"],
+        ["day", "call", "contact"]
+      ]
+    };
+
+    // Q1 and Q8 are open-ended but still need meaningful career/example content.
+    const openGroups = {
+      0: [
+        ["experience", "education", "degree", "college", "graduate"],
+        ["career", "goal", "future", "growth"],
+        ["customer", "support", "service", "voice"],
+        ["communication", "english", "speaking"],
+        ["learn", "develop", "improve"]
+      ],
+      7: [
+        ["situation", "experience", "time"],
+        ["customer", "person", "colleague"],
+        ["difficult", "unhappy", "angry"],
+        ["listen", "understand", "calm"],
+        ["resolve", "solution", "help"]
+      ]
+    };
+
+    const groups = keywordGroups[questionIndex] || openGroups[questionIndex] || [];
+    const matchedGroups = groups.filter(function(group) {
+      return hasAny(text, group);
+    }).length;
+
+    // If the candidate simply repeats a large portion of the question,
+    // treat it as non-responsive rather than rewarding keyword overlap.
+    const echoSimilarity = tokenSimilarity(spokenText, question);
+    if (echoSimilarity >= 0.70 && matchedGroups < 3) {
+      return null;
+    }
+
+    // A meaningful voice-process answer needs more than 2-3 words.
+    if (wordCount < 6) {
+      return null;
+    }
+
+    const fillerCount = countAny(text, ["uh", "um", "ah", "basically", "like"]);
+    const wpm = (wordCount / Math.max(durationSeconds, 1)) * 60;
+
+    // Fluency: measured from response length, pacing and fillers.
+    let fluency = 5.0;
+    if (wordCount >= 12) fluency += 1.5;
+    if (wordCount >= 20) fluency += 1.0;
+    if (wpm >= 80 && wpm <= 175) fluency += 1.2;
+    if (fillerCount === 0) fluency += 0.8;
+    else fluency -= Math.min(fillerCount * 0.3, 1.2);
+    fluency = Math.max(4.0, Math.min(9.5, fluency));
+
+    // Grammar: transcript-length/relevance proxy.
+    let grammar = 5.0;
+    if (wordCount >= 10) grammar += 1.0;
+    if (wordCount >= 18) grammar += 1.0;
+    if (wordCount >= 28) grammar += 0.7;
+    grammar += Math.min(matchedGroups * 0.35, 1.75);
+    grammar = Math.max(4.0, Math.min(9.5, grammar));
+
+    // Handling/relevance is intentionally weighted strongly for customer support.
+    let handling = 4.0;
+    handling += matchedGroups * 0.9;
+    handling = Math.max(4.0, Math.min(9.5, handling));
+
+    // Pronunciation/clarity proxy from transcript completeness and pacing.
+    let pronunciation = 5.0;
+    if (wordCount >= 10) pronunciation += 1.0;
+    if (wpm >= 80 && wpm <= 175) pronunciation += 1.0;
+    if (fillerCount === 0) pronunciation += 0.5;
+    pronunciation += Math.min(matchedGroups * 0.25, 1.25);
+    pronunciation = Math.max(4.0, Math.min(9.0, pronunciation));
+
+    // Overall is weighted for a US customer-support voice process:
+    // relevance/handling 35%, fluency 25%, grammar 15%, pronunciation 25%.
+    const overall =
+      handling * 0.35 +
+      fluency * 0.25 +
+      grammar * 0.15 +
+      pronunciation * 0.25;
 
     return {
       overall: Number(overall.toFixed(1)),
@@ -754,7 +929,7 @@
      NEXT QUESTION
   ===================================================== */
 
-  function nextQuestion(autoAdvance = false) {
+  function nextQuestion() {
     clearError();
 
     if (isRecording && recognition) {
@@ -768,15 +943,29 @@
 
     const spokenText = finalTranscript.trim();
 
-    if (spokenText.length < 2 && !autoAdvance) {
-      showError("Please speak your answer before continuing.");
+    // HARD SAFETY RULE:
+    // Never create or submit a score when SpeechRecognition did not
+    // produce a final transcript. This prevents the 0-score rows.
+    if (spokenText.length < 2) {
+      showError("No speech was captured for this question. Please try again.");
+      statusText.textContent = "Please speak your answer and try again.";
+      nextBtn.classList.add("hidden");
+      resetAnswerTimer();
       return;
     }
 
     const durationSeconds = Math.max((Date.now() - speechStartTime) / 1000, 1);
-    const score = spokenText.length >= 2
-      ? calculateScore(spokenText, durationSeconds)
-      : { overall: 0, fluency: 0, pronunciation: 0, grammar: 0, handling: 0 };
+    const score = calculateScore(spokenText, durationSeconds, currentQuestion);
+
+    if (!score) {
+      showError(
+        "Your answer was too short, not relevant enough, or repeated the question. Please answer in your own words."
+      );
+      statusText.textContent = "Please give a clear, relevant answer and try again.";
+      nextBtn.classList.add("hidden");
+      resetAnswerTimer();
+      return;
+    }
 
     candidateData.scores.push(score);
     currentQuestion++;
@@ -820,6 +1009,17 @@
                     " scores but received " + total);
       stepTest.classList.remove("hidden");
       showError("Assessment is incomplete. Please complete all 10 questions.");
+      return;
+    }
+
+    const invalidScore = candidateData.scores.some(function(score) {
+      return !score || !Number.isFinite(score.overall) || score.overall <= 0;
+    });
+
+    if (invalidScore) {
+      console.error("Submission blocked: one or more answers has an invalid/zero score.");
+      stepTest.classList.remove("hidden");
+      showError("One or more answers were not captured. Please retry those questions.");
       return;
     }
 
