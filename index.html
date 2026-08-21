@@ -332,7 +332,7 @@
       </button>
 
       <p class="small-note">
-        Please speak clearly in English. Each answer has a maximum of 15 seconds.
+        Please speak clearly in English. Each answer has a fixed 15-second testing window.
         You can click "Save & Continue" as soon as you finish speaking.
       </p>
 
@@ -459,8 +459,6 @@
     recognition.onstart = function () {
       isRecording = true;
       speechStartTime = Date.now();
-      startAnswerTimer();
-
       statusText.textContent = "🔴 Listening... Speak clearly.";
       recBtn.classList.add("recording");
       recBtnText.textContent = "Stop Recording";
@@ -500,20 +498,19 @@
       } else {
         showError("Microphone notice: " + event.error);
       }
-
-      // A failed attempt must never leave the old countdown visible.
-      resetAnswerTimer();
     };
 
     recognition.onend = function() {
       isRecording = false;
-      stopAnswerTimer();
       recBtn.classList.remove("recording");
       recBtnText.textContent = "Click to Speak Answer";
 
       if (finalTranscript.trim().length >= 2) {
         nextBtn.classList.remove("hidden");
         statusText.textContent = "Speech captured. Click Save & Continue.";
+      } else if (timerInterval !== null) {
+        statusText.textContent =
+          "Speech service ended early. The 15-second assessment window continues...";
       } else {
         statusText.textContent = "Microphone Idle";
         resetAnswerTimer();
@@ -544,45 +541,38 @@
   }
 
   function startAnswerTimer() {
-    // Every new recording starts a completely fresh 15-second countdown.
     stopAnswerTimer();
 
+    const timerStartedAt = Date.now();
     remainingSeconds = MAX_ANSWER_SECONDS;
-    timerBox.textContent = "Answer Time: " + MAX_ANSWER_SECONDS + " seconds";
+    timerBox.textContent = "Answer Time: 15 seconds";
     timerBox.classList.remove("warning");
 
     timerInterval = setInterval(function () {
-      remainingSeconds--;
-
-      if (remainingSeconds <= 0) {
-        remainingSeconds = 0;
-        timerBox.textContent = "Answer Time: 0 seconds";
-        stopAnswerTimer();
-
-        if (recognition) {
-          try {
-            recognition.stop();
-          } catch(e) {}
-        }
-
-        isRecording = false;
-        recBtn.classList.remove("recording");
-        recBtnText.textContent = "Click to Speak Answer";
-        statusText.textContent =
-          "Time up. Click Save & Continue if your answer was captured.";
-
-        if (finalTranscript.trim().length >= 2) {
-          nextBtn.classList.remove("hidden");
-        }
-        return;
-      }
+      const elapsed = Math.floor((Date.now() - timerStartedAt) / 1000);
+      remainingSeconds = Math.max(MAX_ANSWER_SECONDS - elapsed, 0);
 
       timerBox.textContent = "Answer Time: " + remainingSeconds + " seconds";
 
       if (remainingSeconds <= 5) {
         timerBox.classList.add("warning");
       }
-    }, 1000);
+
+      if (remainingSeconds <= 0) {
+        stopAnswerTimer();
+
+        if (recognition) {
+          try { recognition.stop(); } catch(e) {}
+        }
+
+        isRecording = false;
+        recBtn.classList.remove("recording");
+        recBtnText.textContent = "Click to Speak Answer";
+        statusText.textContent = "15 seconds completed. Moving to next question...";
+
+        nextQuestion(true);
+      }
+    }, 100);
   }
 
 
@@ -667,10 +657,13 @@
       return;
     }
 
-    // Reset state before fresh recording attempt
+    // Start a fresh 15-second assessment window independently
+    // of the browser SpeechRecognition service.
     resetAnswerTimer();
     finalTranscript = "";
+    speechStartTime = Date.now();
     transcriptBox.textContent = "Listening...";
+    startAnswerTimer();
 
     try {
       recognition.start();
@@ -747,7 +740,7 @@
      NEXT QUESTION
   ===================================================== */
 
-  function nextQuestion() {
+  function nextQuestion(autoAdvance = false) {
     clearError();
 
     if (isRecording && recognition) {
@@ -761,13 +754,15 @@
 
     const spokenText = finalTranscript.trim();
 
-    if (spokenText.length < 2) {
+    if (spokenText.length < 2 && !autoAdvance) {
       showError("Please speak your answer before continuing.");
       return;
     }
 
     const durationSeconds = Math.max((Date.now() - speechStartTime) / 1000, 1);
-    const score = calculateScore(spokenText, durationSeconds);
+    const score = spokenText.length >= 2
+      ? calculateScore(spokenText, durationSeconds)
+      : { overall: 0, fluency: 0, pronunciation: 0, grammar: 0, handling: 0 };
 
     candidateData.scores.push(score);
     currentQuestion++;
