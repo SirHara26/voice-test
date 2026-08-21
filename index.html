@@ -452,7 +452,6 @@
   if (SpeechRecognition) {
     recognition = new SpeechRecognition();
 
-    // Continuous set to false prevents socket disconnects on GitHub Pages
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = "en-IN";
@@ -481,7 +480,8 @@
 
       transcriptBox.textContent = finalTranscript + interimTranscript;
 
-      if (finalTranscript.trim().length >= 5) {
+      // Reveal button once text starts coming in
+      if ((finalTranscript + interimTranscript).trim().length >= 3) {
         nextBtn.classList.remove("hidden");
       }
     };
@@ -489,9 +489,13 @@
     recognition.onerror = function(event) {
       console.error("Speech Recognition Error:", event.error);
 
-      // Treat no-speech as non-fatal
+      // Handle no-speech cleanly without looping
       if (event.error === "no-speech") {
-        statusText.textContent = "No speech detected. Please try speaking again.";
+        isRecording = false;
+        stopAnswerTimer();
+        recBtn.classList.remove("recording");
+        recBtnText.textContent = "Click to Speak Answer";
+        statusText.textContent = "No speech detected. Click to try speaking again.";
         return;
       }
 
@@ -501,19 +505,15 @@
       recBtnText.textContent = "Click to Speak Answer";
 
       if (event.error === "not-allowed") {
-        showError("Microphone permission denied. Please enable mic access in your browser site settings.");
+        showError("Microphone permission denied. Please allow mic access in browser settings.");
       } else if (event.error === "network") {
-        showError(
-          "Network Error: Google Speech API failed to connect. Please check your internet connection, " +
-          "disable any Ad-Blockers/Brave Shields for this site, and ensure you are using Chrome or Edge."
-        );
+        showError("Network Error: Google Speech API failed to connect. Check internet connection or disable Ad-Blockers.");
       } else {
         showError("Microphone error: " + event.error);
       }
     };
 
     recognition.onend = function() {
-      // Auto restart recognition if candidate is still within timer limits
       if (isRecording && remainingSeconds > 0) {
         try {
           recognition.start();
@@ -527,8 +527,10 @@
         isRecording = false;
         stopAnswerTimer();
         recBtn.classList.remove("recording");
-        recBtnText.textContent = "Resume Speaking";
-        if (finalTranscript.trim().length >= 5) {
+        recBtnText.textContent = "Click to Speak Answer";
+
+        if (finalTranscript.trim().length >= 3) {
+          nextBtn.classList.remove("hidden");
           statusText.textContent = "Speech captured. Click Save & Continue.";
         } else {
           statusText.textContent = "Microphone Idle";
@@ -537,7 +539,7 @@
     };
 
   } else {
-    showError("Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.");
+    showError("Speech recognition is not supported in this browser. Please use Google Chrome.");
   }
 
 
@@ -553,7 +555,7 @@
   }
 
   function startAnswerTimer() {
-    if (timerInterval) return; // Prevent multiple intervals
+    if (timerInterval) return;
 
     timerInterval = setInterval(function () {
       remainingSeconds--;
@@ -749,7 +751,7 @@
 
     const spokenText = finalTranscript.trim();
 
-    if (spokenText.length < 5) {
+    if (spokenText.length < 3) {
       showError("Please speak your answer before continuing.");
       return;
     }
