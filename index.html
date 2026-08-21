@@ -572,7 +572,19 @@
         recBtnText.textContent = "Click to Speak Answer";
         statusText.textContent = "15 seconds completed. Moving to next question...";
 
-        nextQuestion(true);
+        // Never submit an automatic zero just because SpeechRecognition
+        // returned no-speech. Keep the candidate on this question and allow
+        // a fresh recording attempt.
+        if (finalTranscript.trim().length >= 2) {
+          nextQuestion(true);
+        } else {
+          remainingSeconds = MAX_ANSWER_SECONDS;
+          timerBox.textContent = "Answer Time: 15 seconds";
+          timerBox.classList.remove("warning");
+          statusText.textContent =
+            "No speech was detected. Please try this question again.";
+          nextBtn.classList.add("hidden");
+        }
       }
     }, 100);
   }
