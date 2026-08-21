@@ -480,8 +480,7 @@
 
       transcriptBox.textContent = finalTranscript + interimTranscript;
 
-      // Reveal button once text starts coming in
-      if ((finalTranscript + interimTranscript).trim().length >= 3) {
+      if ((finalTranscript + interimTranscript).trim().length >= 2) {
         nextBtn.classList.remove("hidden");
       }
     };
@@ -489,52 +488,34 @@
     recognition.onerror = function(event) {
       console.error("Speech Recognition Error:", event.error);
 
-      // Handle no-speech cleanly without looping
-      if (event.error === "no-speech") {
-        isRecording = false;
-        stopAnswerTimer();
-        recBtn.classList.remove("recording");
-        recBtnText.textContent = "Click to Speak Answer";
-        statusText.textContent = "No speech detected. Click to try speaking again.";
-        return;
-      }
-
       isRecording = false;
       stopAnswerTimer();
       recBtn.classList.remove("recording");
       recBtnText.textContent = "Click to Speak Answer";
 
-      if (event.error === "not-allowed") {
+      if (event.error === "no-speech") {
+        statusText.textContent = "No speech detected. Click button to speak again.";
+      } else if (event.error === "not-allowed") {
         showError("Microphone permission denied. Please allow mic access in browser settings.");
       } else if (event.error === "network") {
-        showError("Network Error: Google Speech API failed to connect. Check internet connection or disable Ad-Blockers.");
+        showError("Network Error: Google Speech API failed to connect. Check internet connection.");
       } else {
         showError("Microphone error: " + event.error);
       }
     };
 
     recognition.onend = function() {
-      if (isRecording && remainingSeconds > 0) {
-        try {
-          recognition.start();
-        } catch (e) {
-          isRecording = false;
-          stopAnswerTimer();
-          recBtn.classList.remove("recording");
-          recBtnText.textContent = "Resume Speaking";
-        }
-      } else {
-        isRecording = false;
-        stopAnswerTimer();
-        recBtn.classList.remove("recording");
-        recBtnText.textContent = "Click to Speak Answer";
+      // Safely end recording session without restarting loop
+      isRecording = false;
+      stopAnswerTimer();
+      recBtn.classList.remove("recording");
+      recBtnText.textContent = "Click to Speak Answer";
 
-        if (finalTranscript.trim().length >= 3) {
-          nextBtn.classList.remove("hidden");
-          statusText.textContent = "Speech captured. Click Save & Continue.";
-        } else {
-          statusText.textContent = "Microphone Idle";
-        }
+      if (finalTranscript.trim().length >= 2) {
+        nextBtn.classList.remove("hidden");
+        statusText.textContent = "Speech captured. Click Save & Continue.";
+      } else {
+        statusText.textContent = "Microphone Idle";
       }
     };
 
@@ -569,8 +550,10 @@
         stopAnswerTimer();
         isRecording = false;
         if (recognition) {
-          statusText.textContent = "Time completed. Saving your response...";
-          recognition.stop();
+          statusText.textContent = "Time completed. Click Save & Continue.";
+          try {
+            recognition.stop();
+          } catch(e) {}
         }
       }
     }, 1000);
@@ -659,7 +642,9 @@
     if (isRecording) {
       isRecording = false;
       stopAnswerTimer();
-      recognition.stop();
+      try {
+        recognition.stop();
+      } catch(e) {}
       return;
     }
 
@@ -746,12 +731,14 @@
 
     if (isRecording && recognition) {
       isRecording = false;
-      recognition.stop();
+      try {
+        recognition.stop();
+      } catch(e) {}
     }
 
     const spokenText = finalTranscript.trim();
 
-    if (spokenText.length < 3) {
+    if (spokenText.length < 2) {
       showError("Please speak your answer before continuing.");
       return;
     }
