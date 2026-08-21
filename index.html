@@ -1074,7 +1074,7 @@ const QUESTION_TIME_LIMITS = [
     return [...new Set(items.filter(Boolean))].join("; ");
   }
 
-  async async function submitFinalResults() {
+  async function submitFinalResults() {
     clearError();
 
     const total = candidateData.scores.length;
