@@ -1074,28 +1074,8 @@ const QUESTION_TIME_LIMITS = [
     return [...new Set(items.filter(Boolean))].join("; ");
   }
 
-  async function submitFinalResults() {
-    stopAnswerTimer();
-
-    let overall = 0;
-    let fluency = 0;
-    let pronunciation = 0;
-    let grammar = 0;
-    let handling = 0;
-    let relevance = 0;
-    let professionalism = 0;
-    let allFlags = [];
-
-    candidateData.scores.forEach(function(score) {
-      overall += score.overall;
-      fluency += score.fluency;
-      pronunciation += score.pronunciation;
-      grammar += score.grammar;
-      handling += score.handling;
-      relevance += score.relevance;
-      professionalism += score.professionalism;
-      allFlags = allFlags.concat(score.flags || []);
-    });
+  async async function submitFinalResults() {
+    clearError();
 
     const total = candidateData.scores.length;
 
@@ -1108,78 +1088,125 @@ const QUESTION_TIME_LIMITS = [
     const invalidScore = candidateData.scores.some(function(score) {
       return !score ||
         !Number.isFinite(score.overall) ||
-        score.overall <= 0 ||
-        !Number.isFinite(score.relevance);
+        score.overall <= 0;
     });
 
     if (invalidScore) {
       stepTest.classList.remove("hidden");
-      showError("One or more answers were not captured correctly. Please retry.");
+      showError("One or more answers were not captured. Please retry those questions.");
       return;
     }
 
-    const avg = {
-      overall: Number((overall / total).toFixed(1)),
-      fluency: Number((fluency / total).toFixed(1)),
-      pronunciation: Number((pronunciation / total).toFixed(1)),
-      grammar: Number((grammar / total).toFixed(1)),
-      handling: Number((handling / total).toFixed(1)),
-      relevance: Number((relevance / total).toFixed(1)),
-      professionalism: Number((professionalism / total).toFixed(1))
+    const scores = candidateData.scores;
+
+    const avg = function(key) {
+      return Number(
+        (scores.reduce(function(sum, s) {
+          return sum + Number(s[key] || 0);
+        }, 0) / total).toFixed(1)
+      );
     };
 
-    const recommendation = getRecommendation(
-      avg.overall,
-      avg.handling,
-      avg.relevance,
-      allFlags
+    const overall = avg("overall");
+    const fluency = avg("fluency");
+    const pronunciation = avg("pronunciation");
+    const grammar = avg("grammar");
+    const handling = avg("handling");
+    const relevance = avg("relevance");
+    const professionalism = avg("professionalism");
+    const readiness = avg("readiness");
+
+    function recommendationFor(score, handle, rel, prof) {
+      if (score >= 8.0 && handle >= 7.5 && rel >= 7.5 && prof >= 7.0) {
+        return "Strongly Recommended";
+      }
+      if (score >= 7.0 && handle >= 6.5 && rel >= 6.5) {
+        return "Recommended";
+      }
+      if (score >= 6.0) {
+        return "HR Review";
+      }
+      return "Not Recommended";
+    }
+
+    function resultFor(score) {
+      if (score >= 8.0) return "Excellent";
+      if (score >= 7.0) return "Good";
+      if (score >= 6.0) return "Average";
+      if (score >= 5.0) return "Needs Improvement";
+      return "Poor";
+    }
+
+    const overallResult = resultFor(overall);
+    const recommendation = recommendationFor(
+      overall, handling, relevance, professionalism
     );
 
-    const questionScores = candidateData.scores
-      .map(function(score) { return score.overall.toFixed(1); })
-      .join(", ");
-
     const strengths = [];
-    if (avg.fluency >= 7.5) strengths.push("Fluency");
-    if (avg.pronunciation >= 7.5) strengths.push("Clarity");
-    if (avg.grammar >= 7.5) strengths.push("Grammar");
-    if (avg.handling >= 7.5) strengths.push("Customer Handling");
-    if (avg.relevance >= 7.5) strengths.push("Response Relevance");
-    if (avg.professionalism >= 7.5) strengths.push("Professionalism");
-
     const improvements = [];
-    if (avg.fluency < 7.0) improvements.push("Fluency");
-    if (avg.pronunciation < 7.0) improvements.push("Clarity");
-    if (avg.grammar < 7.0) improvements.push("Grammar");
-    if (avg.handling < 7.0) improvements.push("Customer Handling");
-    if (avg.relevance < 7.0) improvements.push("Response Relevance");
-    if (avg.professionalism < 7.0) improvements.push("Professionalism");
+    const flags = [];
+
+    const skillMap = [
+      ["Fluency", fluency],
+      ["Pronunciation / Clarity", pronunciation],
+      ["Grammar", grammar],
+      ["Customer Handling", handling],
+      ["Relevance / Response Quality", relevance],
+      ["Professionalism", professionalism]
+    ];
+
+    skillMap.forEach(function(item) {
+      if (item[1] >= 7.5) strengths.push(item[0]);
+      if (item[1] < 6.5) improvements.push(item[0]);
+    });
+
+    scores.forEach(function(score, index) {
+      if (!score || score.overall < 5.0) {
+        flags.push("Q" + (index + 1) + " Low Score");
+      }
+      if (score && score.qualityFlag) {
+        flags.push("Q" + (index + 1) + " " + score.qualityFlag);
+      }
+    });
 
     const formData = new URLSearchParams();
 
-    formData.append("candidateName", candidateData.name);
-    formData.append("candidatePhone", candidateData.phone);
-    formData.append("assessmentVersion", "V4-US-VOICE-RECRUITMENT");
-    formData.append("overall", avg.overall.toFixed(1));
-    formData.append("fluency", avg.fluency.toFixed(1));
-    formData.append("pronunciation", avg.pronunciation.toFixed(1));
-    formData.append("grammar", avg.grammar.toFixed(1));
-    formData.append("handling", avg.handling.toFixed(1));
-    formData.append("relevance", avg.relevance.toFixed(1));
-    formData.append("professionalism", avg.professionalism.toFixed(1));
-    formData.append("readiness", recommendation.readiness);
-    formData.append("overallResult", recommendation.result);
-    formData.append("recommendation", recommendation.recommendation);
-    formData.append("questionScores", questionScores);
-    formData.append("strengths", uniqueJoin(strengths) || "No major strength above benchmark");
-    formData.append("improvements", uniqueJoin(improvements) || "No major improvement area");
-    formData.append("flags", uniqueJoin(allFlags) || "None");
+    // Candidate details
+    formData.append("candidateName", candidateData.name || "");
+    formData.append("candidatePhone", candidateData.phone || "");
+    formData.append("assessmentVersion", "V4-US-CLIENT");
 
-    candidateData.scores.forEach(function(score, index) {
-      formData.append("q" + (index + 1) + "Score", score.overall.toFixed(1));
+    // Overall skill mapping
+    formData.append("overall", overall.toFixed(1));
+    formData.append("fluency", fluency.toFixed(1));
+    formData.append("pronunciation", pronunciation.toFixed(1));
+    formData.append("grammar", grammar.toFixed(1));
+    formData.append("handling", handling.toFixed(1));
+    formData.append("relevance", relevance.toFixed(1));
+    formData.append("professionalism", professionalism.toFixed(1));
+    formData.append("readiness", readiness.toFixed(1));
+
+    // Recruitment decision
+    formData.append("overallResult", overallResult);
+    formData.append("recommendation", recommendation);
+
+    // Detailed report
+    formData.append(
+      "questionScores",
+      scores.map(function(s, idx) {
+        return "Q" + (idx + 1) + "=" + Number(s.overall || 0).toFixed(1);
+      }).join(" | ")
+    );
+    formData.append("strengths", strengths.length ? strengths.join(", ") : "None identified");
+    formData.append("improvementAreas", improvements.length ? improvements.join(", ") : "None identified");
+    formData.append("riskFlags", flags.length ? flags.join(", ") : "None");
+
+    // Individual question scores
+    scores.forEach(function(score, index) {
+      formData.append("q" + (index + 1) + "Score", Number(score.overall || 0).toFixed(1));
     });
 
-    console.log("Recruitment assessment submission:", Object.fromEntries(formData));
+    console.log("Submitting recruitment report:", Object.fromEntries(formData));
 
     try {
       await fetch(GOOGLE_SHEET_URL, {
@@ -1191,14 +1218,13 @@ const QUESTION_TIME_LIMITS = [
         body: formData.toString()
       });
 
-      progress.style.width = "100%";
       stepTest.classList.add("hidden");
       stepComplete.classList.remove("hidden");
-      statusText.textContent = "Assessment submitted successfully.";
+
     } catch (error) {
-      console.error("Google Sheet submission error:", error);
+      console.error("Google Sheet submission failed:", error);
       stepTest.classList.remove("hidden");
-      showError("Assessment completed, but submission to Google Sheet failed. Please contact HR.");
+      showError("Unable to submit the assessment report. Please try again.");
     }
   }
 
